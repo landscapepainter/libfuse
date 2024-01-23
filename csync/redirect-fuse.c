@@ -16,7 +16,7 @@
  *
  * Compile with
  *
- *     gcc -Wall -D_FILE_OFFSET_BITS=64 redirect-fuse-no-log.c set.c `pkg-config fuse3 --cflags --libs` -o redirect-fuse
+ *     gcc -Wall -D_FILE_OFFSET_BITS=64 redirect-fuse.c set.c `pkg-config fuse3 --cflags --libs` -o redirect-fuse
  *
  * ## Source code ##
  * \include redirect-fuse.c
@@ -31,6 +31,7 @@
 #endif
 
 #include <fuse.h>
+#include <libgen.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -200,12 +201,31 @@ static int xmp_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_
     return 0;
 }
 
+static int mkdir_p(const char* path, mode_t mode) {
+    char* tmp = strdup(path);
+    char* parent = dirname(tmp);
+    int err = 0;
+
+    if (strcmp(parent, ".") == 0 || strcmp(parent, "/") == 0) {
+        free(tmp);
+        return 0;
+    }
+
+    err = mkdir_p(parent, mode);
+    free(tmp);
+
+    if (err != 0 && errno != EEXIST) {
+        return -1;
+    }
+
+    return mkdir(path, mode);
+}
 
 static int xmp_mkdir(const char *path, mode_t mode)
 {
-    char* translated_path = full_path(path, 1, 0);
-    int res = mkdir(translated_path, mode);
-	free(translated_path);
+    char* write_path = full_path(path, 1, 0);
+    int res = mkdir_p(write_path, mode);
+	free(write_path);
 	if (res == -1)
 		return -errno;
 
@@ -338,11 +358,18 @@ static int xmp_create(const char *path, mode_t mode,
 {
 
     char* write_path = full_path(path, 1, 0);
+	mode_t mkdir_mode = 0755;  // Octal notation
+	char* tmp = strdup(write_path);
+	char* parent = dirname(tmp);
+	mkdir_p(parent, mkdir_mode);
     int res = open(write_path, fi->flags, mode);
-	free(write_path);
-	if (res == -1)
-		return -errno;
 
+	if (res == -1) {
+		return -errno;
+	}
+
+	free(tmp);
+	free(write_path);
 	fi->fh = res;
 	fi->parallel_direct_writes = 1;
 	return 0;
